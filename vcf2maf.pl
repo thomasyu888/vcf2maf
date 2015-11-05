@@ -11,7 +11,7 @@ use Config;
 
 # Set any default paths and constants
 my ( $tumor_id, $normal_id ) = ( "TUMOR", "NORMAL" );
-my ( $vep_path, $vep_data, $vep_forks, $ref_fasta ) = ( "$ENV{HOME}/vep", "$ENV{HOME}/.vep", 4, "$ENV{HOME}/.vep/homo_sapiens/81_GRCh37/Homo_sapiens.GRCh37.75.dna.primary_assembly.fa" );
+my ( $vep_path, $vep_data, $vep_forks, $ref_fasta ) = ( "$ENV{HOME}/vep", "$ENV{HOME}/.vep", 4, "$ENV{HOME}/.vep/homo_sapiens/82_GRCh37/Homo_sapiens.GRCh37.75.dna.primary_assembly.fa.gz" );
 my ( $species, $ncbi_build, $maf_center, $min_hom_vaf ) = ( "homo_sapiens", "GRCh37", ".", 0.7 );
 my $perl_bin = $Config{perlpath};
 
@@ -91,6 +91,7 @@ sub GetBiotypePriority {
         'IG_C_gene' => 2, # Immunoglobulin (Ig) variable chain genes imported or annotated according to the IMGT
         'IG_D_gene' => 2, # Immunoglobulin (Ig) variable chain genes imported or annotated according to the IMGT
         'IG_J_gene' => 2, # Immunoglobulin (Ig) variable chain genes imported or annotated according to the IMGT
+        'IG_LV_gene' => 2, # Immunoglobulin (Ig) variable chain genes imported or annotated according to the IMGT
         'IG_V_gene' => 2, # Immunoglobulin (Ig) variable chain genes imported or annotated according to the IMGT
         'TR_C_gene' => 2, # T-cell receptor (TcR) genes imported or annotated according to the IMGT
         'TR_D_gene' => 2, # T-cell receptor (TcR) genes imported or annotated according to the IMGT
@@ -99,8 +100,14 @@ sub GetBiotypePriority {
         'miRNA' => 3, # Non-coding RNA predicted using sequences from RFAM and miRBase
         'snRNA' => 3, # Non-coding RNA predicted using sequences from RFAM and miRBase
         'snoRNA' => 3, # Non-coding RNA predicted using sequences from RFAM and miRBase
+        'ribozyme' => 3, # Non-coding RNA predicted using sequences from RFAM and miRBase
+        'sRNA' => 3, # Non-coding RNA predicted using sequences from RFAM and miRBase
+        'scaRNA' => 3, # Non-coding RNA predicted using sequences from RFAM and miRBase
         'rRNA' => 3, # Non-coding RNA predicted using sequences from RFAM and miRBase
         'lincRNA' => 3, # Long, intervening noncoding (linc) RNAs, that can be found in evolutionarily conserved, intergenic regions
+        'known_ncrna' => 4,
+        'vaultRNA' => 4, # Short non coding RNA genes that form part of the vault ribonucleoprotein complex
+        'macro_lncRNA' => 4, # unspliced lncRNAs that are several kb in size
         'Mt_tRNA' => 4, # Non-coding RNA predicted using sequences from RFAM and miRBase
         'Mt_rRNA' => 4, # Non-coding RNA predicted using sequences from RFAM and miRBase
         'antisense' => 5, # Has transcripts that overlap the genomic span (i.e. exon or introns) of a protein-coding locus on the opposite strand
@@ -131,6 +138,7 @@ sub GetBiotypePriority {
         'translated_unprocessed_pseudogene' => 8, # Pseudogenes that have mass spec data suggesting that they are also translated
         'transcribed_processed_pseudogene' => 8, # Pseudogene where protein homology or genomic structure indicates a pseudogene, but the presence of locus-specific transcripts indicates expression
         'transcribed_unprocessed_pseudogene' => 8, # Pseudogene where protein homology or genomic structure indicates a pseudogene, but the presence of locus-specific transcripts indicates expression
+        'transcribed_unitary_pseudogene' => 8, #Pseudogene where protein homology or genomic structure indicates a pseudogene, but the presence of locus-specific transcripts indicates expression
         'unitary_pseudogene' => 8, # A species specific unprocessed pseudogene without a parent gene, as it has an active orthologue in another species
         'unprocessed_pseudogene' => 8, # Pseudogene that can contain introns since produced by gene duplication
         'Mt_tRNA_pseudogene' => 8, # Non-coding RNAs predicted to be pseudogenes by the Ensembl pipeline
@@ -142,6 +150,7 @@ sub GetBiotypePriority {
         'misc_RNA_pseudogene' => 8, # Non-coding RNAs predicted to be pseudogenes by the Ensembl pipeline
         'miRNA_pseudogene' => 8, # Non-coding RNAs predicted to be pseudogenes by the Ensembl pipeline
         'IG_C_pseudogene' => 8, # Inactivated immunoglobulin gene
+        'IG_D_pseudogene' => 8, # Inactivated immunoglobulin gene
         'IG_J_pseudogene' => 8, # Inactivated immunoglobulin gene
         'IG_V_pseudogene' => 8, # Inactivated immunoglobulin gene
         'TR_J_pseudogene' => 8, # Inactivated immunoglobulin gene
@@ -205,20 +214,19 @@ if( $input_vcf ) {
     $output_vcf =~ s/(\.vcf)*$/.vep.vcf/;
 
     # Skip running VEP if an annotated VCF already exists
-    if( -s $output_vcf ) {
-        warn "WARNING: Annotated VCF already exists ($output_vcf). Skipping re-annotation.\n";
-    }
-    else {
+    unless( -s $output_vcf ) {
         warn "STATUS: Running VEP and writing to: $output_vcf\n";
         # Make sure we can find the VEP script and the reference FASTA
         ( -s "$vep_path/variant_effect_predictor.pl" ) or die "ERROR: Cannot find VEP script variant_effect_predictor.pl in path: $vep_path\n";
         ( -s $ref_fasta ) or die "ERROR: Reference FASTA not found: $ref_fasta\n";
 
         # Contruct VEP command using some default options and run it
-        my $vep_cmd = "$perl_bin $vep_path/variant_effect_predictor.pl --species $species --assembly $ncbi_build --offline --no_progress --no_stats --sift b --ccds --uniprot --hgvs --symbol --numbers --domains --regulatory --canonical --protein --biotype --uniprot --tsl --pubmed --variant_class --shift_hgvs 1 --check_existing --check_alleles --check_ref --total_length --allele_number --no_escape --xref_refseq --failed 1 --vcf --flag_pick_allele --pick_order canonical,tsl,biotype,rank,ccds,length --dir $vep_data --fasta $ref_fasta --input_file $input_vcf --output_file $output_vcf";
+        my $vep_cmd = "$perl_bin $vep_path/variant_effect_predictor.pl --species $species --assembly $ncbi_build --offline --no_progress --no_stats --sift b --ccds --uniprot --hgvs --symbol --numbers --domains --gene_phenotype --regulatory --canonical --protein --biotype --uniprot --tsl --pubmed --variant_class --shift_hgvs 1 --check_existing --check_alleles --check_ref --total_length --allele_number --no_escape --xref_refseq --failed 1 --vcf --minimal --flag_pick_allele --pick_order canonical,tsl,biotype,rank,ccds,length --dir $vep_data --fasta $ref_fasta --input_file $input_vcf --output_file $output_vcf";
         $vep_cmd .= " --fork $vep_forks" if( $vep_forks > 1 ); # VEP barks if it's set to 1
         # Add options that only work on human variants
         $vep_cmd .= " --polyphen b --gmaf --maf_1kg --maf_esp" if( $species eq "homo_sapiens" );
+        # Add options that only work on human variants mapped to the GRCh37 reference genome
+        $vep_cmd .= " --plugin ExAC,$vep_data/ExAC.r0.3.sites.minus_somatic.vcf.gz" if( $species eq "homo_sapiens" and $ncbi_build eq "GRCh37" );
 
         # Make sure it ran without error codes
         system( $vep_cmd ) == 0 or die "\nERROR: Failed to run the VEP annotator!\nCommand: $vep_cmd\n";
@@ -247,7 +255,8 @@ my @ann_cols = qw( Allele Gene Feature Feature_type Consequence cDNA_position CD
     SYMBOL_SOURCE HGNC_ID BIOTYPE CANONICAL CCDS ENSP SWISSPROT TREMBL UNIPARC RefSeq SIFT PolyPhen
     EXON INTRON DOMAINS GMAF AFR_MAF AMR_MAF ASN_MAF EAS_MAF EUR_MAF SAS_MAF AA_MAF EA_MAF CLIN_SIG
     SOMATIC PUBMED MOTIF_NAME MOTIF_POS HIGH_INF_POS MOTIF_SCORE_CHANGE IMPACT PICK VARIANT_CLASS
-    TSL HGVS_OFFSET PHENO );
+    TSL HGVS_OFFSET PHENO MINIMISED ExAC_AF ExAC_AF_AFR ExAC_AF_AMR ExAC_AF_EAS ExAC_AF_FIN
+    ExAC_AF_NFE ExAC_AF_OTH ExAC_AF_SAS GENE_PHENO );
 my @ann_cols_format; # To store the actual order of VEP data, that may differ between runs
 push( @maf_header, @ann_cols );
 
@@ -496,6 +505,11 @@ while( my $line = $vcf_fh->getline ) {
     # Figure out the appropriate start/stop loci and variant type/allele to report in the MAF
     my $start = my $stop = my $var_type = "";
     my ( $ref_length, $var_length ) = ( length( $ref ), length( $var ));
+    # Remove any prefixed reference bps from all alleles, using "-" for simple indels
+    while( substr( $ref, 0, 1 ) eq substr( $var, 0, 1 )) {
+        ( $ref, $var, @alleles ) = map{$_ = substr( $_, 1 ); ( $_ ? $_ : "-" )} ( $ref, $var, @alleles );
+        --$ref_length; --$var_length; ++$pos;
+    }
     # Handle SNPs, DNPs, TNPs, or anything larger (ONP)
     if( $ref_length == $var_length ) {
         ( $start, $stop ) = ( $pos, $pos + $var_length - 1 );
@@ -504,15 +518,12 @@ while( my $line = $vcf_fh->getline ) {
     }
     # Handle all indels, including those complex ones which contain substitutions
     elsif( $ref_length != $var_length ) {
-        # Remove the prefixed reference bp from all alleles, using "-" for simple indels
-        ( $ref, $var, @alleles ) = map{$_ = substr( $_, 1 ); ( $_ ? $_ : "-" )} ( $ref, $var, @alleles );
-        --$ref_length; --$var_length;
         if( $ref_length < $var_length ) { # Handle insertions, and the special case for complex ones
-            ( $start, $stop ) = ( $pos, ( $ref eq "-" ? $pos + 1 : $pos + $ref_length ));
+            ( $start, $stop ) = ( $pos - 1, ( $ref eq "-" ? $pos : $pos + $ref_length - 1 ));
             $var_type = "INS";
         }
         else { # Handle deletions
-            ( $start, $stop ) = ( $pos + 1, $pos + $ref_length );
+            ( $start, $stop ) = ( $pos, $pos + $ref_length - 1 );
             $var_type = "DEL";
         }
     }
@@ -622,7 +633,7 @@ while( my $line = $vcf_fh->getline ) {
 
     # Construct the MAF columns from the $maf_effect hash, and print to output
     %maf_line = map{( $_, ( $maf_effect->{$_} ? $maf_effect->{$_} : '' ))} @maf_header;
-    $maf_line{Hugo_Symbol} = 'Unknown' unless( $maf_effect->{Hugo_Symbol} );
+    $maf_line{Hugo_Symbol} = $maf_effect->{Transcript_ID} unless( $maf_effect->{Hugo_Symbol} );
     $maf_line{Entrez_Gene_Id} = '0';
     $maf_line{Center} = $maf_center;
     $maf_line{NCBI_Build} = $ncbi_build;
@@ -730,7 +741,7 @@ __DATA__
  --vep-path       Folder containing variant_effect_predictor.pl [~/vep]
  --vep-data       VEP's base cache/plugin directory [~/.vep]
  --vep-forks      Number of forked processes to use when running VEP [4]
- --ref-fasta      Reference FASTA file [~/.vep/homo_sapiens/81_GRCh37/Homo_sapiens.GRCh37.75.dna.primary_assembly.fa]
+ --ref-fasta      Reference FASTA file [~/.vep/homo_sapiens/82_GRCh37/Homo_sapiens.GRCh37.75.dna.primary_assembly.fa.gz]
  --species        Ensembl-friendly name of species (e.g. mus_musculus for mouse) [homo_sapiens]
  --ncbi-build     NCBI reference assembly of variants MAF (e.g. GRCm38 for mouse) [GRCh37]
  --maf-center     Variant calling center to report in MAF [.]

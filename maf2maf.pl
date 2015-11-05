@@ -16,7 +16,7 @@ use Config;
 my ( $tum_depth_col, $tum_rad_col, $tum_vad_col ) = qw( t_depth t_ref_count t_alt_count );
 my ( $nrm_depth_col, $nrm_rad_col, $nrm_vad_col ) = qw( n_depth n_ref_count n_alt_count );
 my ( $vep_path, $vep_data, $vep_forks, $ref_fasta ) = ( "$ENV{HOME}/vep", "$ENV{HOME}/.vep", 4,
-    "$ENV{HOME}/.vep/homo_sapiens/81_GRCh37/Homo_sapiens.GRCh37.75.dna.primary_assembly.fa" );
+    "$ENV{HOME}/.vep/homo_sapiens/82_GRCh37/Homo_sapiens.GRCh37.75.dna.primary_assembly.fa.gz" );
 my ( $species, $ncbi_build, $maf_center, $min_hom_vaf ) = ( "homo_sapiens", "GRCh37", ".", 0.7 );
 my $perl_bin = $Config{perlpath};
 
@@ -37,7 +37,9 @@ my %force_new_cols = map{ my $c = lc; ( $c, 1 )} qw( Hugo_Symbol Entrez_Gene_Id 
     Existing_variation ALLELE_NUM DISTANCE STRAND SYMBOL SYMBOL_SOURCE HGNC_ID BIOTYPE CANONICAL
     CCDS ENSP SWISSPROT TREMBL UNIPARC RefSeq SIFT PolyPhen EXON INTRON DOMAINS GMAF AFR_MAF
     AMR_MAF ASN_MAF EAS_MAF EUR_MAF SAS_MAF AA_MAF EA_MAF CLIN_SIG SOMATIC PUBMED MOTIF_NAME
-    MOTIF_POS HIGH_INF_POS MOTIF_SCORE_CHANGE IMPACT PICK VARIANT_CLASS TSL HGVS_OFFSET PHENO );
+    MOTIF_POS HIGH_INF_POS MOTIF_SCORE_CHANGE IMPACT PICK VARIANT_CLASS TSL HGVS_OFFSET PHENO
+    MINIMISED ExAC_AF ExAC_AF_AFR ExAC_AF_AMR ExAC_AF_EAS ExAC_AF_FIN ExAC_AF_NFE ExAC_AF_OTH
+    ExAC_AF_SAS GENE_PHENO );
 
 # Check for missing or crappy arguments
 unless( @ARGV and $ARGV[0]=~m/^-/ ) {
@@ -90,7 +92,7 @@ else {
 my $maf2vcf_cmd = "$perl_bin $maf2vcf_path --input-maf $input_maf --output-dir $tmp_dir " .
     "--ref-fasta $ref_fasta --tum-depth-col $tum_depth_col --tum-rad-col $tum_rad_col " .
     "--tum-vad-col $tum_vad_col --nrm-depth-col $nrm_depth_col --nrm-rad-col $nrm_rad_col ".
-    "--nrm-vad-col $nrm_vad_col";
+    "--nrm-vad-col $nrm_vad_col --per-tn-vcfs";
 system( $maf2vcf_cmd ) == 0 or die "\nERROR: Failed to run maf2vcf!\nCommand: $maf2vcf_cmd\n";
 
 my $vcf_file = "$tmp_dir/" . substr( $input_maf, rindex( $input_maf, '/' ) + 1 );
@@ -109,10 +111,12 @@ else {
     ( -s $ref_fasta ) or die "ERROR: Reference FASTA not found: $ref_fasta\n";
     
     # Contruct VEP command using some default options and run it
-    my $vep_cmd = "$perl_bin $vep_path/variant_effect_predictor.pl --species $species --assembly $ncbi_build --offline --no_progress --no_stats --sift b --ccds --uniprot --hgvs --symbol --numbers --domains --regulatory --canonical --protein --biotype --uniprot --tsl --pubmed --variant_class --shift_hgvs 1 --check_existing --check_alleles --check_ref --total_length --allele_number --no_escape --xref_refseq --failed 1 --vcf --flag_pick_allele --pick_order canonical,tsl,biotype,rank,ccds,length --dir $vep_data --fasta $ref_fasta --input_file $vcf_file --output_file $vep_anno";
+    my $vep_cmd = "$perl_bin $vep_path/variant_effect_predictor.pl --species $species --assembly $ncbi_build --offline --no_progress --no_stats --sift b --ccds --uniprot --hgvs --symbol --numbers --domains --gene_phenotype --regulatory --canonical --protein --biotype --uniprot --tsl --pubmed --variant_class --shift_hgvs 1 --check_existing --check_alleles --check_ref --total_length --allele_number --no_escape --xref_refseq --failed 1 --vcf --minimal --flag_pick_allele --pick_order canonical,tsl,biotype,rank,ccds,length --dir $vep_data --fasta $ref_fasta --input_file $vcf_file --output_file $vep_anno";
     $vep_cmd .= " --fork $vep_forks" if( $vep_forks > 1 ); # VEP barks if it's set to 1
     # Add options that only work on human variants
     $vep_cmd .= " --polyphen b --gmaf --maf_1kg --maf_esp" if( $species eq "homo_sapiens" );
+    # Add options that only work on human variants mapped to the GRCh37 reference genome
+    $vep_cmd .= " --plugin ExAC,$vep_data/ExAC.r0.3.sites.minus_somatic.vcf.gz" if( $species eq "homo_sapiens" and $ncbi_build eq "GRCh37" );
 
     # Make sure it ran without error codes
     system( $vep_cmd ) == 0 or die "\nERROR: Failed to run the VEP annotator!\nCommand: $vep_cmd\n";
@@ -202,7 +206,7 @@ foreach my $tn_vcf ( @vcfs ) {
     $tn_maf =~ s/.vcf$/.vep.maf/;
     my $vcf2maf_cmd = "$perl_bin $vcf2maf_path --input-vcf $tn_vcf --output-maf $tn_maf " .
         "--tumor-id $tumor_id --normal-id $normal_id --vep-path $vep_path --vep-data $vep_data " .
-        "--vep-forks $vep_forks --ref-fasta $ref_fasta";
+        "--vep-forks $vep_forks --ref-fasta $ref_fasta --ncbi-build $ncbi_build --species $species";
     $vcf2maf_cmd .= " --custom-enst $custom_enst_file" if( $custom_enst_file );
     system( $vcf2maf_cmd ) == 0 or die "\nERROR: Failed to run vcf2maf!\nCommand: $vcf2maf_cmd\n";
 }
@@ -347,7 +351,7 @@ __DATA__
  --vep-forks      Number of forked processes to use when running VEP [4]
  --species        Ensembl-friendly name of species (e.g. mus_musculus for mouse) [homo_sapiens]
  --ncbi-build     NCBI reference assembly of variants MAF (e.g. GRCm38 for mouse) [GRCh37]
- --ref-fasta      Reference FASTA file [~/.vep/homo_sapiens/81_GRCh37/Homo_sapiens.GRCh37.75.dna.primary_assembly.fa]
+ --ref-fasta      Reference FASTA file [~/.vep/homo_sapiens/82_GRCh37/Homo_sapiens.GRCh37.75.dna.primary_assembly.fa.gz]
  --help           Print a brief help message and quit
  --man            Print the detailed manual
 

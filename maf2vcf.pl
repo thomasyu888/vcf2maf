@@ -9,7 +9,7 @@ use Getopt::Long qw( GetOptions );
 use Pod::Usage qw( pod2usage );
 
 # Set any default paths and constants
-my $ref_fasta = "$ENV{HOME}/.vep/homo_sapiens/81_GRCh37/Homo_sapiens.GRCh37.75.dna.primary_assembly.fa";
+my $ref_fasta = "$ENV{HOME}/.vep/homo_sapiens/82_GRCh37/Homo_sapiens.GRCh37.75.dna.primary_assembly.fa.gz";
 my ( $tum_depth_col, $tum_rad_col, $tum_vad_col ) = qw( t_depth t_ref_count t_alt_count );
 my ( $nrm_depth_col, $nrm_rad_col, $nrm_vad_col ) = qw( n_depth n_ref_count n_alt_count );
 
@@ -25,7 +25,7 @@ unless( @ARGV and $ARGV[0]=~m/^-/ ) {
 }
 
 # Parse options and print usage syntax on a syntax error, or if help was explicitly requested
-my ( $man, $help ) = ( 0, 0 );
+my ( $man, $help, $per_tn_vcfs ) = ( 0, 0, 0 );
 my ( $input_maf, $output_dir, $output_vcf );
 GetOptions(
     'help!' => \$help,
@@ -34,6 +34,7 @@ GetOptions(
     'output-dir=s' => \$output_dir,
     'output-vcf=s' => \$output_vcf,
     'ref-fasta=s' => \$ref_fasta,
+    'per-tn-vcfs!' => \$per_tn_vcfs,
     'tum-depth-col=s' => \$tum_depth_col,
     'tum-rad-col=s' => \$tum_rad_col,
     'tum-vad-col=s' => \$tum_vad_col,
@@ -89,12 +90,14 @@ while( my $line = $maf_fh->getline ) {
         foreach my $pair ( @tn_pair ) {
             my ( $t_id, $n_id ) = split( /\t/, $pair );
             $n_id = "NORMAL" unless( defined $n_id ); # Use a placeholder name for normal if its undefined
-            my $vcf_file = "$output_dir/$t_id\_vs_$n_id.vcf";
-            $tn_vcf{$vcf_file} .= "##fileformat=VCFv4.2\n";
-            $tn_vcf{$vcf_file} .= "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n";
-            $tn_vcf{$vcf_file} .= "##FORMAT=<ID=AD,Number=G,Type=Integer,Description=\"Allelic Depths of REF and ALT(s) in the order listed\">\n";
-            $tn_vcf{$vcf_file} .= "##FORMAT=<ID=DP,Number=1,Type=Integer,Description=\"Read Depth\">\n";
-            $tn_vcf{$vcf_file} .= "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t$t_id\t$n_id\n";
+            if( $per_tn_vcfs ) {
+                my $vcf_file = "$output_dir/$t_id\_vs_$n_id.vcf";
+                $tn_vcf{$vcf_file} .= "##fileformat=VCFv4.2\n";
+                $tn_vcf{$vcf_file} .= "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n";
+                $tn_vcf{$vcf_file} .= "##FORMAT=<ID=AD,Number=G,Type=Integer,Description=\"Allelic Depths of REF and ALT(s) in the order listed\">\n";
+                $tn_vcf{$vcf_file} .= "##FORMAT=<ID=DP,Number=1,Type=Integer,Description=\"Read Depth\">\n";
+                $tn_vcf{$vcf_file} .= "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t$t_id\t$n_id\n";
+            }
             
             # Set genotype column indexes for the multi-sample VCF, and keep the pairing info
             $vcf_col_idx{ $t_id } = $idx++ if ( !exists $vcf_col_idx{ $t_id } );
@@ -110,7 +113,7 @@ while( my $line = $maf_fh->getline ) {
     $line_count++;
 
     # For a variant in the MAF, parse out the bare minimum data needed by a VCF
-    my ( $chr, $pos, $ref, $al1, $al2, $t_id, $n_id, $n_al1, $n_al2 ) = map{ my $c = lc; ( defined $col_idx{$c} ? $cols[$col_idx{$c}] : undef )} qw( Chromosome Start_Position Reference_Allele Tumor_Seq_Allele1 Tumor_Seq_Allele2 Tumor_Sample_Barcode Matched_Norm_Sample_Barcode Match_Norm_Seq_Allele1 Match_Norm_Seq_Allele2 );
+    my ( $chr, $pos, $ref, $al1, $al2, $t_id, $n_id, $n_al1, $n_al2 ) = map{ my $c = lc; ( defined $col_idx{$c} ? $cols[$col_idx{$c}] : "" )} qw( Chromosome Start_Position Reference_Allele Tumor_Seq_Allele1 Tumor_Seq_Allele2 Tumor_Sample_Barcode Matched_Norm_Sample_Barcode Match_Norm_Seq_Allele1 Match_Norm_Seq_Allele2 );
 
     # Make sure that our minimum required columns contain proper data
     map{( !m/^\s*$/ ) or die "ERROR: $_ is empty in MAF line $line_count!\n" } qw( Chromosome Start_Position Reference_Allele Tumor_Sample_Barcode );
@@ -120,28 +123,36 @@ while( my $line = $maf_fh->getline ) {
     my ( $t_dp, $t_rad, $t_vad, $n_dp, $n_rad, $n_vad ) = map{ my $c = lc; (( defined $col_idx{$c} and defined $cols[$col_idx{$c}] and $cols[$col_idx{$c}] =~ m/^\d+/ ) ? sprintf( "%.0f", $cols[$col_idx{$c}] ) : '.' )} ( $tum_depth_col, $tum_rad_col, $tum_vad_col, $nrm_depth_col, $nrm_rad_col, $nrm_vad_col );
 
     # Normal sample ID could be undefined for legit reasons, but we need a placeholder name
-    $n_id = "NORMAL" unless( $n_id );
+    $n_id = "NORMAL" if( $n_id eq "" );
 
     # If normal alleles are unset in the MAF (quite common), assume homozygous reference
-    $n_al1 = $ref unless( $n_al1 );
-    $n_al2 = $ref unless( $n_al2 );
+    $n_al1 = $ref if( $n_al1 eq "" );
+    $n_al2 = $ref if( $n_al2 eq "" );
 
     # Make sure we have at least 1 variant allele. If 1 is unset, set it to the reference allele
-    if( !defined $al1 and !defined $al2 ) {
+    if( $al1 eq "" and $al2 eq "" ) {
         warn "WARNING: Skipping variant at $chr:$pos without any variant alleles specified!\n";
         next;
     }
-    $al1 = $ref unless( defined $al1 );
-    $al2 = $ref unless( defined $al2 );
+    $al1 = $ref if( $al1 eq "" );
+    $al2 = $ref if( $al2 eq "" );
 
+    # Handle a case when $al1 is a SNP we want to annotate, but $al2 is incorrectly "-"
+    ( $al1, $al2 ) = ( $al2, $al1 ) if( $al2 eq "-" );
+
+    # Make a version of chrom without chr-prefixes, and chrM renamed to MT
+    my $no_prefix_chr = $chr;
+    $no_prefix_chr =~ s/^chr//;
+    $no_prefix_chr =~ s/^M$/MT/;
+    
     # To represent indels in VCF format, we need to fetch the preceding bp from a reference FASTA
     my ( $ref_len, $al1_len, $al2_len ) = map{( $_=~m/^(\?|-|0)+$/ ? 0 : length( $_ )) } ( $ref, $al1, $al2 );
     if( $ref_len == 0 or $al1_len == 0 or $al2_len == 0 ) {
         --$pos if( $ref_len > $al1_len or $ref_len > $al2_len ); # Decrement POS for deletions only
-        my $prefix_bp = `$samtools faidx $ref_fasta $chr:$pos-$pos | grep -v ^\\>`;
+        my $prefix_bp = `$samtools faidx $ref_fasta $no_prefix_chr:$pos-$pos | grep -v ^\\>`;
         chomp( $prefix_bp );
         $prefix_bp = uc( $prefix_bp );
-        ( $prefix_bp =~ m/^[ACGTN]$/ ) or die "ERROR: Cannot retreive bp at $chr:$pos! Please specify --ref-fasta appropriately\n";
+        ( $prefix_bp =~ m/^[ACGTN]$/ ) or die "ERROR: Cannot retreive bp at $no_prefix_chr:$pos! Please check that you chose the right reference genome with --ref-fasta:\n$ref_fasta\n";
         # Blank out the dashes (or other weird chars) used with indels, and prefix the fetched bp
         ( $ref, $al1, $al2, $n_al1, $n_al2 ) = map{s/^(\?|-|0)+$//; $_=$prefix_bp.$_} ( $ref, $al1, $al2, $n_al1, $n_al2 );
     }
@@ -163,8 +174,9 @@ while( my $line = $maf_fh->getline ) {
     }
 
     # Set tumor and normal genotypes (FORMAT tag GT in VCF)
-    my $t_gt = join( "/", $al_idx{$al1}, $al_idx{$al2} );
-    my $n_gt = join( "/", $al_idx{$n_al1}, $al_idx{$n_al2} );
+    my ( $t_gt, $n_gt ) = ( "0/1", "0/0" ); # Set defaults
+    $t_gt = join( "/", $al_idx{$al2}, $al_idx{$al1} ) if( $al_idx{$al1} ne "0" );
+    $n_gt = join( "/", $al_idx{$n_al2}, $al_idx{$n_al1} ) if( $al_idx{$n_al1} ne "0" or $al_idx{$n_al2} ne "0" );
 
     # Create the VCF's comma-delimited ALT field that must list all non-REF (variant) alleles
     my $alt = join( ",", @alleles[1..$#alleles] );
@@ -180,9 +192,11 @@ while( my $line = $maf_fh->getline ) {
     my $n_fmt = "$n_gt:$n_rad,$n_vad:$n_dp";
 
     # Contruct a VCF formatted line and append it to the respective VCF
-    my $vcf_file = "$output_dir/$t_id\_vs_$n_id.vcf";
-    my $vcf_line = join( "\t", $chr, $pos, ".", $ref, $alt, qw( . . . ), "GT:AD:DP", $t_fmt, $n_fmt );
-    $tn_vcf{$vcf_file} .= "$vcf_line\n";
+    if( $per_tn_vcfs ) {
+        my $vcf_file = "$output_dir/$t_id\_vs_$n_id.vcf";
+        my $vcf_line = join( "\t", $chr, $pos, ".", $ref, $alt, qw( . . . ), "GT:AD:DP", $t_fmt, $n_fmt );
+        $tn_vcf{$vcf_file} .= "$vcf_line\n";
+    }
 
     # Store VCF formatted data for the multi-sample VCF
     my $key = join( "\t", $chr, $pos, ".", $ref, $alt);
@@ -193,10 +207,12 @@ while( my $line = $maf_fh->getline ) {
 $maf_fh->close;
 
 # Write the cached contents of per-TN VCFs into files
-foreach my $vcf_file ( keys %tn_vcf ) {
-    my $tn_vcf_fh = IO::File->new( $vcf_file, ">" ) or die "ERROR: Fail to create file $vcf_file\n";
-    $tn_vcf_fh->print( $tn_vcf{$vcf_file} );
-    $tn_vcf_fh->close;
+if( $per_tn_vcfs ) {
+    foreach my $vcf_file ( keys %tn_vcf ) {
+        my $tn_vcf_fh = IO::File->new( $vcf_file, ">" ) or die "ERROR: Fail to create file $vcf_file\n";
+        $tn_vcf_fh->print( $tn_vcf{$vcf_file} );
+        $tn_vcf_fh->close;
+    }
 }
 
 # Initialize header lines for the multi-sample VCF
@@ -239,7 +255,8 @@ __DATA__
  --input-maf      Path to input file in MAF format
  --output-dir     Path to output directory where VCFs will be stored, one per TN-pair
  --output-vcf     Path to output multi-sample VCF containing all TN-pairs [<output-dir>/<input-maf-name>.vcf]
- --ref-fasta      Path to reference Fasta file [~/.vep/homo_sapiens/81_GRCh37/Homo_sapiens.GRCh37.75.dna.primary_assembly.fa]
+ --ref-fasta      Path to reference Fasta file [~/.vep/homo_sapiens/82_GRCh37/Homo_sapiens.GRCh37.75.dna.primary_assembly.fa.gz]
+ --per-tn-vcfs    Specify this to generate VCFs per-TN pair, in addition to the multi-sample VCF
  --tum-depth-col  Name of MAF column for read depth in tumor BAM [t_depth]
  --tum-rad-col    Name of MAF column for reference allele depth in tumor BAM [t_ref_count]
  --tum-vad-col    Name of MAF column for variant allele depth in tumor BAM [t_alt_count]
@@ -251,7 +268,7 @@ __DATA__
 
 =head1 DESCRIPTION
 
-This script breaks down variants in a MAF into VCFs for each tumor-normal pair, in preparation for annotation with vcf2maf
+This script breaks down variants in a MAF into VCFs for each tumor-normal pair, in preparation for annotation with VEP. Creates a multi-sample VCF in addition to per-TN pair.
 
 =head2 Relevant links:
 
